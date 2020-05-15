@@ -5,7 +5,8 @@ use crate::db;
 use std::collections::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use failure_derive::*;
-use crate::entity::{Entity, EntityStore};
+use crate::entity::{Entity, EntityStore, EntityError};
+use crate::authenticator::{Authenticator, AuthenticatorStore};
 
 #[derive(Debug, Fail)]
 pub enum IdentifierError {
@@ -51,6 +52,8 @@ pub struct Identifier {
     pub value: Option<String>,
     #[serde(rename = "entity")]
     pub entities: Option<Vec<Entity>>,
+    #[serde(rename = "authenticator")]
+    pub authenticators: Option<Vec<Authenticator>>,
     #[serde(rename = "dgraph.type")]
     pub dtype: Option<Vec<String>>
 }
@@ -85,6 +88,16 @@ impl Identifier {
         let mut curr_ents = self.entities.unwrap();
         curr_ents.push(entity);
         self.entities = Some(curr_ents);
+        self
+    }
+
+    pub fn add_authenticator(mut self, a: Authenticator) -> Self {
+        if self.authenticators.is_none() {
+            self.authenticators = Some(vec![])
+        }
+        let mut curr_auth = self.authenticators.unwrap();
+        curr_auth.push(a);
+        self.authenticators = Some(curr_auth);
         self
     }
 
@@ -129,11 +142,11 @@ impl IdentifierStore {
                 break;
             }
             EntityStore::associate_identity(i.clone().entities
-                .ok_or(IdentifierError::Empty())?
-                .get(0)
-                .ok_or(IdentifierError::Empty())?
-                .uid.as_ref().ok_or(IdentifierError::Empty())?
-            , ass, vec!["uid".to_string()]);
+                                                .ok_or(IdentifierError::Empty())?
+                                                .get(0)
+                                                .ok_or(IdentifierError::Empty())?
+                                                .uid.as_ref().ok_or(IdentifierError::Empty())?
+                                            , ass, vec!["uid".to_string()]);
             return Self::find_by_type_value(&create_ident_type, &create_ident_value, fields)
         }
         Err(IdentifierError::IdentifierExists().into())
@@ -206,5 +219,19 @@ impl IdentifierStore {
             0 => Ok(None),
             _ => Ok(Some(e.identifier.get(0).ok_or(IdentifierError::Empty())?.clone()))
         }
+    }
+
+    pub fn associate_authenticator(uid: &str, e: Authenticator, fields: Vec<String>) -> Result<Option<Identifier>, failure::Error> {
+        let res = Self::find_by_uid(uid, vec!["uid".to_string(), "guid".to_string(), "authenticator { uid }".to_string()])?;
+        if res.is_none() {
+            return Err(IdentifierError::DoesNotExist().into())
+        }
+        let update: Identifier = res.clone().ok_or(EntityError::Empty())?.add_authenticator(e.clone());
+        println!("DEBUG => {:?}", update);
+        db::save(serde_json::to_vec(&update)?)?;
+
+        AuthenticatorStore::associate_identifier(e.uid.as_ref().ok_or(EntityError::EmptyField("uid".to_string()))?, update, vec!["uid".to_string()])?;
+
+        return Self::find_by_uid(uid, fields);
     }
 }

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset=utf-8>
+    <title>Travs | Log In</title>
+</head>
+<body>
+<h3>Will hit handle_post_1</h3>
+<form action="/login" method=POST>
+    <input type="hidden" name="_csrf" value={{csrf_token}}>
+    <input type="hidden" name="challenge" value={{challenge}}>
+    <input type="hidden" name="authenticator_type" value="email_password">
+    <input type="hidden" name="system" value="sqlybO1Qn911bSh3c46bj">
+    <label>
+        Email:
+        <input type="email" name="identifier" placeholder="email@foobar.com">
+    </label>
+    <label>
+        Password:
+        <input type="password" name="authenticator">
+    </label>
+    <button type=submit>Log In</button>
+</form>
+</body>
+</html>

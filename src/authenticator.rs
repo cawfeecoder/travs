@@ -7,7 +7,7 @@ use serde_derive::{Deserialize, Serialize};
 use failure_derive::*;
 use crate::entity::{Entity, EntityStore, EntityError};
 use crate::identifier::{Identifier, IdentifierStore, IdentifierType, IdentifierError};
-use crate::system::System;
+use crate::system::{System, SystemStore};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AuthenticatorRoot {
@@ -211,7 +211,19 @@ impl AuthenticatorStore {
                                                 .get(0)
                                                 .ok_or(AuthenticatorError::Empty())?
                                                 .uid.as_ref().ok_or(AuthenticatorError::Empty())?
-                                            , ass, vec!["uid".to_string()]);
+                                            , ass.clone(), vec!["uid".to_string()]);
+            SystemStore::associate_authenticator(a.clone().systems
+                                                     .ok_or(AuthenticatorError::Empty())?
+                                                     .get(0)
+                                                     .ok_or(AuthenticatorError::Empty())?
+                                                     .guid.as_ref().ok_or(AuthenticatorError::Empty())?
+                                                 , ass.clone(), vec!["uid".to_string()]);
+            IdentifierStore::associate_authenticator(a.clone().identifiers
+                                                         .ok_or(AuthenticatorError::Empty())?
+                                                         .get(0)
+                                                         .ok_or(AuthenticatorError::Empty())?
+                                                         .uid.as_ref().ok_or(AuthenticatorError::Empty())?
+                                                     , ass.clone(), vec!["uid".to_string()]);
             return Self::find_by_type_identifier(&create_auth_type, &create_auth_ident, fields)
         }
         Err(AuthenticatorError::AuthenticatorExists().into())
@@ -223,6 +235,17 @@ impl AuthenticatorStore {
             return Err(EntityError::DoesNotExist().into())
         }
         let update: Authenticator = res.clone().ok_or(AuthenticatorError::Empty())?.add_system(s);
+        db::save(serde_json::to_vec(&update)?)?;
+
+        return Self::find_by_uid(uid, fields);
+    }
+
+    pub fn associate_identifier(uid: &str, s: Identifier, fields: Vec<String>) -> Result<Option<Authenticator>, failure::Error> {
+        let res = Self::find_by_uid(uid, vec!["uid".to_string(), "system { uid }".to_string()])?;
+        if res.is_none() {
+            return Err(EntityError::DoesNotExist().into())
+        }
+        let update: Authenticator = res.clone().ok_or(AuthenticatorError::Empty())?.add_identifier(s);
         db::save(serde_json::to_vec(&update)?)?;
 
         return Self::find_by_uid(uid, fields);
@@ -260,6 +283,54 @@ impl AuthenticatorStore {
         match e.authenticator.len() {
             0 => Ok(None),
             _ => Ok(Some(e.authenticator.get(0).ok_or(AuthenticatorError::Empty())?.clone()))
+        }
+    }
+
+    pub fn login(a: Authenticator, i: Identifier, s: System) -> Result<bool, failure::Error> {
+        let reg = TEMPLATE_ENGINE_AUTH_STORE.get_or_init(|| {
+            handlebars::Handlebars::new()
+        });
+        let req: &'static str = r#"
+            query authenticator($auth_type: string, $ident_type: string, $ident_value: string, $sys_guid: string) {
+                identifier(func: eq(identifier_type, $ident_type)) @filter(eq(value, $ident_value)) {
+                    A as authenticator @filter(eq(authenticator_type, $auth_type))
+                }
+
+                authenticator(func: uid(A)) {
+                    value
+                    system @filter(eq(guid, $sys_guid)) {
+                        uid
+                    }
+                }
+			}
+        "#;
+        let template_vars = &json!({});
+        let query = reg.render_template(req, template_vars)?;
+        let mut vars: HashMap<String, String> = [
+            ("$auth_type".to_string(), format!("{}", a.authenticator_type.as_ref().ok_or(AuthenticatorError::Empty())?)),
+            ("$ident_type".to_string(), format!("{}", i.identifier_type.as_ref().ok_or(AuthenticatorError::Empty())?)),
+            ("$ident_value".to_string(), format!("{}", i.value.as_ref().ok_or(AuthenticatorError::Empty())?)),
+            ("$sys_guid".to_string(), format!("{}", s.guid.as_ref().ok_or(AuthenticatorError::Empty())?))
+        ].iter().cloned().collect();
+        let res = db::query(query, vars)?;
+        let e: AuthenticatorRoot = serde_json::from_slice(&res.json)?;
+        match e.authenticator.len() {
+            0 => return Ok(false),
+            _ => {
+                let extracted_auth = e.authenticator.get(0).ok_or(AuthenticatorError::Empty())?.clone();
+                if extracted_auth.systems.is_none() {
+                    return Ok(false)
+                }
+                let cmp = argon2::verify_encoded(extracted_auth.value.unwrap().as_str(), a.clone().value.unwrap().as_bytes());
+                match cmp {
+                    Ok(v) => {
+                        Ok(v)
+                    }
+                    Err(e) => {
+                        Err(e.into())
+                    }
+                }
+            }
         }
     }
 

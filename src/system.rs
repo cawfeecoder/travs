@@ -50,6 +50,11 @@ impl System {
         }
     }
 
+    pub fn guid(mut self, guid: String) -> Self {
+        self.guid = Some(guid);
+        self
+    }
+
     pub fn uid(mut self, uid: String) -> Self {
         self.uid = Some(uid);
         self
